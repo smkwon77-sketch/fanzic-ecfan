@@ -4,7 +4,7 @@
 import { Muxer, ArrayBufferTarget } from 'https://cdn.jsdelivr.net/npm/mp4-muxer@5.1.3/build/mp4-muxer.mjs';
 
 const W = 1920, H = 1080, FPS = 30, DUR = 48;
-const C = { bg: '#03152e', fg: '#e8ecf2', soft: '#c9d4e4', muted: '#9fb0c8', air: '#48A9E6', red: '#ED1C24', panel: 'rgba(10,37,72,0.86)', line: '#1b3a66' };
+const C = { bg: '#03152e', fg: '#e8ecf2', soft: '#c9d4e4', muted: '#b4c2d6', air: '#48A9E6', red: '#ED1C24', panel: 'rgba(10,37,72,0.86)', line: '#1b3a66' };
 const F = {
   disp: (s, w = 800) => `${w} ${s}px Archivo, "IBM Plex Sans KR", sans-serif`,
   kr: (s, w = 400) => `${w} ${s}px "IBM Plex Sans KR", "Malgun Gothic", sans-serif`,
@@ -36,7 +36,7 @@ function speedAt(t) {
   return lerp(0.5, 0.8, smooth((t - 22.3) / 1.3));
 }
 
-export function createVideo({ THREE, renderer, scene, camera, fan, assets }) {
+export function createVideo({ THREE, renderer, scene, camera, fan, assets, haze }) {
   const out = document.createElement('canvas'); out.width = W; out.height = H;
   const ctx = out.getContext('2d');
 
@@ -44,7 +44,7 @@ export function createVideo({ THREE, renderer, scene, camera, fan, assets }) {
   let A = 1; // 현재 블록 투명도
   function text(s, x, y, font, color = C.fg, { align = 'left', ls = 0, alpha = 1 } = {}) {
     ctx.save(); ctx.globalAlpha = A * alpha; ctx.font = font; ctx.fillStyle = color; ctx.textAlign = align; ctx.textBaseline = 'alphabetic';
-    ctx.letterSpacing = ls + 'px'; ctx.fillText(s, x, y); const w = ctx.measureText(s).width; ctx.restore(); return w;
+    ctx.letterSpacing = ls + 'px'; ctx.fillText(s, Math.round(x), Math.round(y)); const w = ctx.measureText(s).width; ctx.restore(); return w; // 정수 픽셀 → 글자 번짐 방지
   }
   function runs(parts, x, y) { // [[문자열, 글꼴, 색], ...] 이어 쓰기
     for (const [s, font, color] of parts) x += text(s, x, y, font, color);
@@ -60,7 +60,7 @@ export function createVideo({ THREE, renderer, scene, camera, fan, assets }) {
   function block(t, at, end, fn) {
     const f = ease((t - at) / 0.5), g = 1 - smooth((t - (end - 0.45)) / 0.4);
     const a = Math.min(f, g); if (a <= 0.001) return;
-    ctx.save(); ctx.translate(0, (1 - f) * 18); A = a; fn(); A = 1; ctx.restore();
+    ctx.save(); ctx.translate(0, Math.round((1 - f) * 18)); A = a; fn(); A = 1; ctx.restore();
   }
   const fmt = (n) => Math.round(n).toLocaleString('en-US');
   const pct = (v) => (v < 20 ? v.toFixed(1) : Math.round(v).toString()) + '%';
@@ -82,8 +82,8 @@ export function createVideo({ THREE, renderer, scene, camera, fan, assets }) {
       const rows = [['기술 TECH', '브러시리스 외륜 구동', 'Brushless external-rotor motor', C.fg], ['성능 PERF', '고효율 운전', 'High-efficiency operation', C.fg], ['효과 GAIN', '기존 AC팬 대비 전력비 절감', 'Lower energy cost than AC fans', C.air]];
       rows.forEach(([k, v, en, col], i) => block(t, s0 + 1.6 + i * 1.2, e, () => {
         const y = 590 + i * 93;
-        const [ko, en2] = k.split(' '); const w = text(ko, TX, y - 4, F.kr(19, 500), C.air); text(en2, TX + w + 10, y - 4, F.mono(19), C.air, { ls: 3 }); // 한글은 KR 글꼴, 영문만 모노
-        text(v, 1268, y, F.kr(33, 500), col); text(en, 1268, y + 28, F.kr(21), C.muted);
+        const [ko, en2] = k.split(' '); const w = text(ko, TX, y - 4, F.kr(23, 500), C.air); text(en2, TX + w + 10, y - 4, F.mono(22), C.air, { ls: 3 }); // 한글은 KR 글꼴, 영문만 모노
+        text(v, 1268, y, F.kr(33, 500), col); text(en, 1268, y + 31, F.kr(24), C.muted);
       }));
     },
     speed(t, e) {
@@ -92,7 +92,7 @@ export function createVideo({ THREE, renderer, scene, camera, fan, assets }) {
       block(t, s0 + 0.8, e, () => {
         [['회전 속도 Speed', pct(s), C.fg], ['풍량 Airflow', pct(s), C.fg], ['소비전력 Power', pct(Math.pow(s / 100, 3) * 100), C.air]].forEach(([k, v, col], i) => {
           const x = TX + i * 259; rrect(x, 395, 242, 130, 9, C.panel, C.line);
-          text(k, x + 22, 435, F.kr(20), C.muted); text(v, x + 20, 500, F.disp(57, 700), col);
+          text(k, x + 22, 437, F.kr(23), C.muted); text(v, x + 20, 500, F.disp(57, 700), col);
         });
       });
       block(t, s0 + 1.2, e, () => {
@@ -104,13 +104,13 @@ export function createVideo({ THREE, renderer, scene, camera, fan, assets }) {
         ctx.stroke();
         const dx = L + (s - 20) / 80 * (R - L), dy = B - Math.pow(s / 100, 3) * (B - T);
         ctx.fillStyle = C.air; ctx.beginPath(); ctx.arc(dx, dy, 10, 0, PI * 2); ctx.fill(); ctx.restore();
-        text('power', L + 8, T + 22, F.kr(18), C.muted); text('20%', L, B + 26, F.kr(18), C.muted); text('100% speed', R, B + 26, F.kr(18), C.muted, { align: 'right' });
+        text('power', L + 8, T + 26, F.kr(22), C.muted); text('20%', L, B + 30, F.kr(22), C.muted); text('100% speed', R, B + 30, F.kr(22), C.muted, { align: 'right' });
       });
       block(t, 20.0, e, () => {
         runs([['풍량 50% → 전력 약 ', F.kr(42, 700), C.fg], ['1/8', F.kr(42, 700), C.air]], TX, 918);
         text('~1/8 power at 50% airflow · 팬 상사법칙 이론값 (theoretical)', TX, 960, F.kr(27), C.muted);
       });
-      block(t, s0 + 0.4, e, () => text('※ 전력 수치는 팬 상사법칙에 따른 이론값 · Power figures are theoretical · Fanzic Co., Ltd.', 60, 1040, F.kr(19), C.muted, { alpha: 0.8 }));
+      block(t, s0 + 0.4, e, () => text('※ 전력 수치는 팬 상사법칙에 따른 이론값 · Power figures are theoretical · Fanzic Co., Ltd.', 60, 1040, F.kr(22), C.muted, { alpha: 0.85 }));
     },
     imp(t, e) {
       const s0 = 23.6, f = ease((t - (s0 + 1.3)) / 3.0);
@@ -125,7 +125,7 @@ export function createVideo({ THREE, renderer, scene, camera, fan, assets }) {
       [['운전 상태', 'STATUS'], ['회전 속도', 'SPEED'], ['이상 알림', 'ALERT']].forEach(([k, tag], i) => block(t, s0 + 1.7 + i * 0.8, e, () => {
         const y = 498 + i * 93; rrect(TX, y, 760, 77, 9, C.panel, C.line);
         ctx.save(); ctx.globalAlpha = A; ctx.fillStyle = C.air; ctx.beginPath(); ctx.arc(TX + 36, y + 38.5, 9, 0, PI * 2); ctx.fill(); ctx.restore();
-        text(k, TX + 63, y + 48, F.kr(27, 500)); text(tag, TX + 733, y + 46, F.mono(18), C.muted, { align: 'right', ls: 3 });
+        text(k, TX + 63, y + 48, F.kr(27, 500)); text(tag, TX + 733, y + 47, F.mono(21), C.muted, { align: 'right', ls: 3 });
       }));
       block(t, s0 + 4.4, e, () => { text('IoT 설비 연동 → 원격 관리·예방 정비', TX, 825, F.kr(39, 700)); text('Remote and predictive maintenance', TX, 860, F.kr(25), C.muted); });
     },
@@ -136,7 +136,7 @@ export function createVideo({ THREE, renderer, scene, camera, fan, assets }) {
         .forEach(([h, ko, en], i) => block(t, s0 + 1.1 + i * 0.7, e, () => {
           const x = 120 + i * 570, y = 485; rrect(x, y, 540, 315, 14, C.panel, C.line);
           img(assets.apps[i], x + 34, y + 40, 76, 76);
-          text(h, x + 40, y + 175, F.kr(39, 700)); text(ko, x + 40, y + 235, F.kr(22), C.muted); text(en, x + 40, y + 265, F.kr(23), C.muted);
+          text(h, x + 40, y + 175, F.kr(39, 700)); text(ko, x + 40, y + 235, F.kr(24), C.muted); text(en, x + 40, y + 268, F.kr(24), C.muted);
         }));
     },
     outro(t, e) {
@@ -151,9 +151,9 @@ export function createVideo({ THREE, renderer, scene, camera, fan, assets }) {
       });
       [assets.p1, assets.p2].forEach((p, i) => block(t, s0 + 0.9 + i * 0.25, e + 9, () => {
         const x = 976 + i * 424, y = 350; rrect(x, y, 400, 380, 14, '#f4f5f7');
-        const k = Math.min(352 / p.width, 332 / p.height), w = p.width * k, h = p.height * k; img(p, x + (400 - w) / 2, y + (380 - h) / 2, w, h);
+        const k = Math.min(352 / p.width, 332 / p.height), w = p.width * k, h = p.height * k; ctx.save(); ctx.globalCompositeOperation = 'multiply'; img(p, x + (400 - w) / 2, y + (380 - h) / 2, w, h); ctx.restore(); // 흰 바탕 → 카드 회색
       }));
-      block(t, s0 + 0.3, e + 9, () => text('※ 전력 수치는 팬 상사법칙에 따른 이론값 · Power figures are theoretical · Fanzic Co., Ltd.', 60, 1040, F.kr(19), C.muted, { alpha: 0.8 }));
+      block(t, s0 + 0.3, e + 9, () => text('※ 전력 수치는 팬 상사법칙에 따른 이론값 · Power figures are theoretical · Fanzic Co., Ltd.', 60, 1040, F.kr(22), C.muted, { alpha: 0.85 }));
     },
   };
 
@@ -168,7 +168,7 @@ export function createVideo({ THREE, renderer, scene, camera, fan, assets }) {
     camera.up.set(0, 1, 0); camera.lookAt(tgt);
     camera.setViewOffset(W, H, sc.shift * W, 0, W, H);
     fan.setSpeed(speedAt(t)); fan.update(dt);
-    renderer.render(scene, camera);
+    haze ? haze.render(scene, camera, fan.speed, dt) : renderer.render(scene, camera);
 
     // 배경 + 제품 뒤 은은한 빛
     ctx.globalAlpha = 1; ctx.fillStyle = C.bg; ctx.fillRect(0, 0, W, H);
@@ -177,7 +177,7 @@ export function createVideo({ THREE, renderer, scene, camera, fan, assets }) {
     ctx.drawImage(renderer.domElement, 0, 0, W, H);
     if (sc.dim) { ctx.fillStyle = `rgba(3,21,46,${sc.dim})`; ctx.fillRect(0, 0, W, H); }
     if (sc.text) { // 문구 쪽은 은은하게 어둡게 해서 기류 선이 글자를 가리지 않게
-      const tg = ctx.createLinearGradient(920, 0, 1180, 0); tg.addColorStop(0, 'rgba(3,21,46,0)'); tg.addColorStop(1, 'rgba(3,21,46,0.78)');
+      const tg = ctx.createLinearGradient(920, 0, 1180, 0); tg.addColorStop(0, 'rgba(3,21,46,0)'); tg.addColorStop(1, 'rgba(3,21,46,0.88)');
       ctx.fillStyle = tg; ctx.fillRect(920, 0, W - 920, H);
     }
     // 화면 왼쪽 위 작은 로고(인트로·마무리 제외)

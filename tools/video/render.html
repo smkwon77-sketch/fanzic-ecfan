@@ -12,7 +12,7 @@
 <script type="module">
 import * as THREE from 'three';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
-import { buildFan, addStage } from '../../fe-model.js';
+import { buildFan, addStage, createHaze } from '../../fe-model.js';
 import { createVideo } from './video.js';
 
 // 3d.html과 같은 렌더 설정·조명
@@ -28,6 +28,7 @@ const camera = new THREE.PerspectiveCamera(32, 16 / 9, 0.05, 50);
 addStage(THREE, scene);
 
 const fan = buildFan(THREE); scene.add(fan.group);
+const haze = createHaze(THREE, renderer);
 
 // 실물 사진과 비교할 기준 각도
 const VIEWS = {
@@ -52,9 +53,9 @@ window.studio = {
   THREE, renderer, scene, camera, fan, VIEWS, view, size,
   speed(s) { fan.setSpeed(s); },
   step(dt = 1 / 30, n = 1) { for (let i = 0; i < n; i++) fan.update(dt); },
-  render() { renderer.render(scene, camera); },
+  render() { haze.render(scene, camera, fan.speed, 0); },
   snap(w = 800, h = 450, bg = '#03152e') {
-    size(w, h); renderer.render(scene, camera);
+    size(w, h); haze.render(scene, camera, fan.speed, 0);
     snapCanvas.width = w; snapCanvas.height = h; const x = snapCanvas.getContext('2d');
     x.fillStyle = bg; x.fillRect(0, 0, w, h); x.drawImage(canvas, 0, 0);
     return snapCanvas.toDataURL('image/jpeg', 0.85);
@@ -71,7 +72,7 @@ const assets = {
   logo: await loadImg('assets/fanzic-logo.svg'), p1: await loadImg('assets/product-1.jpg'), p2: await loadImg('assets/product-2.jpg'),
   apps: await Promise.all([1, 2, 3].map((i) => loadImg(`assets/app-${i}.svg`))),
 };
-window.video = createVideo({ THREE, renderer, scene, camera, fan, assets });
+window.video = createVideo({ THREE, renderer, scene, camera, fan, assets, haze });
 window.studio.frame = async (t, name, w = 1280) => { // 영상 한 장면 미리보기 저장 (t초까지 진행한 상태)
   size(1920, 1080); const fps = window.video.FPS;
   for (let i = Math.max(0, Math.round((t - 1.5) * fps)); i <= Math.round(t * fps); i++) window.video.drawFrame(i / fps); // 속도·기류가 자리 잡도록 1.5초 앞에서부터
