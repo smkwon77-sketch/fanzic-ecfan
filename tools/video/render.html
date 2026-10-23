@@ -1,0 +1,84 @@
+<!doctype html>
+<html lang="ko"><head><meta charset="utf-8"><title>FE 렌더 스튜디오</title>
+<!-- 영상 렌더러 겸 비교용 스튜디오. 사이트에서 링크하지 않음.
+     window.studio: view(이름|{pos,target,fov}), speed(s), step(초, 횟수), snap(w,h) → JPEG dataURL -->
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@700;800&family=IBM+Plex+Mono:wght@500&family=IBM+Plex+Sans+KR:wght@400;500;700&display=swap">
+<style>body{margin:0;background:#03152e;color:#e8ecf2;font:13px system-ui}#c{display:block}</style>
+</head><body>
+<canvas id="c" width="1920" height="1080"></canvas>
+<script type="importmap">
+{"imports":{"three":"https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js","three/addons/":"https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"}}
+</script>
+<script type="module">
+import * as THREE from 'three';
+import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
+import { buildFan, addStage } from '../../fe-model.js';
+import { createVideo } from './video.js';
+
+// 3d.html과 같은 렌더 설정·조명
+const canvas = document.getElementById('c');
+const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true, preserveDrawingBuffer: true });
+renderer.setPixelRatio(1);
+renderer.shadowMap.enabled = true; renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+renderer.toneMapping = THREE.ACESFilmicToneMapping; renderer.toneMappingExposure = 1.05;
+const scene = new THREE.Scene();
+const pmrem = new THREE.PMREMGenerator(renderer);
+scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
+const camera = new THREE.PerspectiveCamera(32, 16 / 9, 0.05, 50);
+addStage(THREE, scene);
+
+const fan = buildFan(THREE); scene.add(fan.group);
+
+// 실물 사진과 비교할 기준 각도
+const VIEWS = {
+  front:   { pos: [0.02, 0.1, 1.5], target: [0, 0.02, -0.2], fov: 56 }, // 휴대폰 광각
+  frontQ:  { pos: [-1.5, 0.45, 1.9], target: [0, 0, -0.25] },     // fe-front-05
+  side:    { pos: [-2.4, 0.55, -0.35], target: [0, 0, -0.28] },    // fe-side-01
+  rear:    { pos: [0, 0.12, -2.6], target: [0, 0, -0.3] },         // fe-rear-04
+  rearQ:   { pos: [1.4, 0.9, -2.0], target: [0, 0, -0.3] },        // fe-rear-02
+  top:     { pos: [0, 2.5, -0.55], target: [0, 0, -0.3] },         // fe-rear-07
+  hub:     { pos: [0.06, 0.05, 0.62], target: [0, 0, -0.4], fov: 62 }, // fe-detail-01 (휴대폰 광각, 가까이)
+  page:    { pos: [2.1, 0.8, 0.9], target: [0, 0, -0.26] },        // 3d.html 첫 화면
+};
+function view(v) {
+  const o = typeof v === 'string' ? VIEWS[v] : v;
+  camera.position.set(...o.pos); camera.fov = o.fov || 32; camera.up.set(0, 1, 0);
+  if (Math.abs(o.pos[0]) < 1e-3 && Math.abs(o.pos[2] + 0.55) < 1e-3) camera.up.set(0, 0, 1);
+  camera.lookAt(...o.target); camera.updateProjectionMatrix();
+}
+function size(w, h) { renderer.setSize(w, h, false); camera.aspect = w / h; camera.updateProjectionMatrix(); }
+const snapCanvas = document.createElement('canvas');
+window.studio = {
+  THREE, renderer, scene, camera, fan, VIEWS, view, size,
+  speed(s) { fan.setSpeed(s); },
+  step(dt = 1 / 30, n = 1) { for (let i = 0; i < n; i++) fan.update(dt); },
+  render() { renderer.render(scene, camera); },
+  snap(w = 800, h = 450, bg = '#03152e') {
+    size(w, h); renderer.render(scene, camera);
+    snapCanvas.width = w; snapCanvas.height = h; const x = snapCanvas.getContext('2d');
+    x.fillStyle = bg; x.fillRect(0, 0, w, h); x.drawImage(canvas, 0, 0);
+    return snapCanvas.toDataURL('image/jpeg', 0.85);
+  },
+};
+view('page'); size(1920, 1080);
+
+// 영상: 글꼴(문구에 쓰인 글자 범위까지) + 이미지 준비
+const loadImg = (src) => new Promise((res, rej) => { const i = new Image(); i.onload = () => res(i); i.onerror = rej; i.src = src; });
+const sample = await (await fetch('./video.js')).text();
+await Promise.all(['800 40px Archivo', '700 40px Archivo', '500 20px "IBM Plex Mono"', '400 20px "IBM Plex Sans KR"', '500 20px "IBM Plex Sans KR"', '700 20px "IBM Plex Sans KR"']
+  .map((f) => document.fonts.load(f, sample)));
+const assets = {
+  logo: await loadImg('assets/fanzic-logo.svg'), p1: await loadImg('assets/product-1.jpg'), p2: await loadImg('assets/product-2.jpg'),
+  apps: await Promise.all([1, 2, 3].map((i) => loadImg(`assets/app-${i}.svg`))),
+};
+window.video = createVideo({ THREE, renderer, scene, camera, fan, assets });
+window.studio.frame = async (t, name, w = 1280) => { // 영상 한 장면 미리보기 저장 (t초까지 진행한 상태)
+  size(1920, 1080); const fps = window.video.FPS;
+  for (let i = Math.max(0, Math.round((t - 1.5) * fps)); i <= Math.round(t * fps); i++) window.video.drawFrame(i / fps); // 속도·기류가 자리 잡도록 1.5초 앞에서부터
+  const c = document.createElement('canvas'); c.width = w; c.height = w * 9 / 16; c.getContext('2d').drawImage(window.video.out, 0, 0, c.width, c.height);
+  const b = await new Promise((r) => c.toBlob(r, 'image/jpeg', 0.86));
+  return (await fetch('/save?name=' + name, { method: 'POST', body: b })).text();
+};
+window.studioReady = true;
+</script>
+</body></html>

@@ -267,6 +267,7 @@ footer p{margin:4px 0;max-width:90ch}
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
+import { buildFan, addStage } from './fe-model.js';
 
 /* ---------- content ---------- */
 const POINTS = [
@@ -358,7 +359,7 @@ function select(id){
 /* speed */
 const spd=document.getElementById('spd'); let speed=1;
 function upd(){
-  const s=+spd.value/100; speed=s;
+  const s=+spd.value/100; speed=s; fanModel.setSpeed(s);
   document.getElementById('spdv').textContent=spd.value+'%';
   document.getElementById('mQ').textContent=Math.round(s*100)+'%';
   document.getElementById('mP').textContent=Math.round(s*s*100)+'%';
@@ -380,6 +381,7 @@ spd.addEventListener('input',upd);
 const viewer=document.getElementById('viewer'), canvas=document.getElementById('c');
 const renderer=new THREE.WebGLRenderer({canvas,antialias:true,alpha:true,preserveDrawingBuffer:true});
 renderer.setPixelRatio(Math.min(devicePixelRatio,2));
+renderer.shadowMap.enabled=true; renderer.shadowMap.type=THREE.PCFSoftShadowMap;
 renderer.toneMapping=THREE.ACESFilmicToneMapping; renderer.toneMappingExposure=1.05;
 const scene=new THREE.Scene();
 const pmrem=new THREE.PMREMGenerator(renderer);
@@ -387,97 +389,18 @@ scene.environment=pmrem.fromScene(new RoomEnvironment(),0.04).texture;
 const camera=new THREE.PerspectiveCamera(32,4/3,0.05,50);
 camera.position.set(2.1,0.8,0.9);
 const controls=new OrbitControls(camera,canvas);
-controls.target.set(0,0,-0.22); controls.enableDamping=true; controls.minDistance=1.2; controls.maxDistance=4.5; controls.enablePan=false;
+controls.target.set(0,0,-0.26); controls.enableDamping=true; controls.minDistance=1.2; controls.maxDistance=4.5; controls.enablePan=false;
 controls.autoRotate=true; controls.autoRotateSpeed=0.6;
 canvas.addEventListener('pointerdown',()=>controls.autoRotate=false);
 
-const key=new THREE.DirectionalLight(0xffffff,1.6); key.position.set(2,3,3); scene.add(key);
-const rim=new THREE.DirectionalLight(0x8fdcff,1.2); rim.position.set(-3,1,-3); scene.add(rim);
-scene.add(new THREE.AmbientLight(0x404a66,0.6));
+addStage(THREE,scene,{small:Math.min(innerWidth,innerHeight)<700});
 
-const alu=new THREE.MeshStandardMaterial({color:0xd3d8df,metalness:0.92,roughness:0.28,side:THREE.DoubleSide});
-const navy=new THREE.MeshStandardMaterial({color:0x0c3268,metalness:0.35,roughness:0.55});
-const blackM=new THREE.MeshStandardMaterial({color:0x17181b,metalness:0.4,roughness:0.5});
-const tubeM=new THREE.MeshStandardMaterial({color:0x111214,metalness:0.3,roughness:0.6});
-const bolt=new THREE.MeshStandardMaterial({color:0xbfc4cc,metalness:0.95,roughness:0.25});
-
-const fan=new THREE.Group(); scene.add(fan);
-
-// mounting plate with hole
-const S=0.5, plateShape=new THREE.Shape();
-plateShape.moveTo(-S,-S);plateShape.lineTo(S,-S);plateShape.lineTo(S,S);plateShape.lineTo(-S,S);plateShape.closePath();
-const hole=new THREE.Path(); hole.absarc(0,0,0.215,0,Math.PI*2,true); plateShape.holes.push(hole);
-const plate=new THREE.Mesh(new THREE.ExtrudeGeometry(plateShape,{depth:0.02,bevelEnabled:false,curveSegments:64}),navy);
-plate.position.z=-0.02; fan.add(plate);
-const boltGeo=new THREE.CylinderGeometry(0.012,0.012,0.008,16); boltGeo.rotateX(Math.PI/2);
-[[-1,-1],[1,-1],[1,1],[-1,1]].forEach(([a,b])=>{
-  [[0.44,0.44],[0.44,0.15],[0.15,0.44]].forEach(([u,v])=>{const m=new THREE.Mesh(boltGeo,bolt);m.position.set(a*u,b*v,0.004);fan.add(m)});
-});
-// inlet ring (bell mouth)
-const inletPts=[[0.215,-0.07],[0.215,-0.01],[0.222,0.025],[0.24,0.048],[0.27,0.062],[0.305,0.066],[0.33,0.064]].map(([r,z])=>new THREE.Vector2(r,z));
-const inletGeo=new THREE.LatheGeometry(inletPts,96); inletGeo.rotateX(Math.PI/2);
-fan.add(new THREE.Mesh(inletGeo,alu));
-const flange=new THREE.Mesh(new THREE.RingGeometry(0.29,0.345,96),alu); flange.position.z=0.003; fan.add(flange);
-for(let i=0;i<8;i++){const a=i/8*Math.PI*2+0.2;const m=new THREE.Mesh(boltGeo,bolt);m.position.set(Math.cos(a)*0.325,Math.sin(a)*0.325,0.008);fan.add(m)}
-
-// rotor group (impeller + outer rotor)
-const rotor=new THREE.Group(); rotor.position.z=-0.33; fan.add(rotor);
-const back=new THREE.Mesh(new THREE.CylinderGeometry(0.385,0.385,0.012,96).rotateX(Math.PI/2),alu); back.position.z=0.006; rotor.add(back);
-const shroudPts=[[0.205,0.25],[0.215,0.235],[0.24,0.22],[0.29,0.205],[0.34,0.19],[0.385,0.18]].map(([r,z])=>new THREE.Vector2(r,z));
-const shroudGeo=new THREE.LatheGeometry(shroudPts,96); shroudGeo.rotateX(Math.PI/2); rotor.add(new THREE.Mesh(shroudGeo,alu));
-const NB=7;
-for(let i=0;i<NB;i++){
-  const a0=i/NB*Math.PI*2, pts=[], N=14, r1=0.15, r2=0.38, sweep=0.95, t=0.006;
-  const cl=[]; for(let k=0;k<=N;k++){const f=k/N;const r=r1+(r2-r1)*f;const a=a0+sweep*f*f*0.9+sweep*f*0.1;cl.push([r*Math.cos(a),r*Math.sin(a)])}
-  const sh=new THREE.Shape();
-  const nrm=(k)=>{const p=cl[Math.max(0,k-1)],q=cl[Math.min(N,k+1)];const dx=q[0]-p[0],dy=q[1]-p[1],l=Math.hypot(dx,dy);return[-dy/l,dx/l]};
-  cl.forEach((p,k)=>{const n=nrm(k);const x=p[0]+n[0]*t,y=p[1]+n[1]*t; k?sh.lineTo(x,y):sh.moveTo(x,y)});
-  for(let k=N;k>=0;k--){const n=nrm(k);sh.lineTo(cl[k][0]-n[0]*t,cl[k][1]-n[1]*t)}
-  const g=new THREE.ExtrudeGeometry(sh,{depth:0.19,bevelEnabled:false});
-  const m=new THREE.Mesh(g,alu); m.position.z=0.006; rotor.add(m);
-}
-const hub=new THREE.Mesh(new THREE.CylinderGeometry(0.06,0.08,0.06,48).rotateX(Math.PI/2),alu); hub.position.z=0.04; rotor.add(hub);
-// outer rotor of motor (behind back plate)
-const outer=new THREE.Mesh(new THREE.CylinderGeometry(0.13,0.13,0.11,64).rotateX(Math.PI/2),blackM); outer.position.z=-0.055; rotor.add(outer);
-for(let i=0;i<24;i++){const a=i/24*Math.PI*2;const f=new THREE.Mesh(new THREE.BoxGeometry(0.012,0.01,0.1),blackM);f.position.set(Math.cos(a)*0.134,Math.sin(a)*0.134,-0.055);f.rotation.z=a;rotor.add(f)}
-const marker=new THREE.Mesh(new THREE.BoxGeometry(0.03,0.012,0.104),new THREE.MeshStandardMaterial({color:0x3aa2e6,emissive:0x0b4a7a,metalness:0.2,roughness:0.4}));
-marker.position.set(0,0.137,-0.055); rotor.add(marker);
-
-// stator / controller housing (fixed)
-const housing=new THREE.Mesh(new THREE.BoxGeometry(0.3,0.3,0.06),blackM); housing.position.z=-0.53; fan.add(housing);
-for(let i=-5;i<=5;i++){const r=new THREE.Mesh(new THREE.BoxGeometry(0.26,0.008,0.02),blackM);r.position.set(0,i*0.024,-0.565);r.rotation.z=(i%2?1:-1)*0.6;fan.add(r)}
-const led=new THREE.Mesh(new THREE.SphereGeometry(0.01,16,16),new THREE.MeshBasicMaterial({color:0x3aa2e6})); led.position.set(0.11,-0.11,-0.562); fan.add(led);
-// support tubes
-const tubeR=0.013;
-[[1,1],[1,-1],[-1,1],[-1,-1]].forEach(([a,b])=>{
-  const path=new THREE.CatmullRomCurve3([
-    new THREE.Vector3(a*0.43,b*0.33,-0.02), new THREE.Vector3(a*0.45,b*0.34,-0.2),
-    new THREE.Vector3(a*0.4,b*0.3,-0.42), new THREE.Vector3(a*0.2,b*0.16,-0.53), new THREE.Vector3(a*0.14,b*0.12,-0.53)]);
-  fan.add(new THREE.Mesh(new THREE.TubeGeometry(path,48,tubeR,12,false),tubeM));
-});
-
-// airflow particles
-const NP=900, pos=new Float32Array(NP*3), seeds=[];
-for(let i=0;i<NP;i++)seeds.push({p:Math.random(),a:Math.random()*Math.PI*2,r:Math.random()*0.17+0.02,o:Math.random()*0.1});
-const pgeo=new THREE.BufferGeometry(); pgeo.setAttribute('position',new THREE.BufferAttribute(pos,3));
-const pmat=new THREE.PointsMaterial({color:0x3aa2e6,size:0.012,transparent:true,opacity:0.85,depthWrite:false,blending:THREE.AdditiveBlending});
-const pts=new THREE.Points(pgeo,pmat); fan.add(pts);
-const solids=[]; fan.traverse(o=>{if(o.isMesh)solids.push(o)});
-const ray=new THREE.Raycaster();
-function placeParticle(s,i){
-  const p=s.p; let x,y,z;
-  if(p<0.45){ // axial inflow from front
-    const f=p/0.45; z=0.9-(0.9+0.12)*f; const rr=s.r*(1-0.3*f); x=Math.cos(s.a)*rr; y=Math.sin(s.a)*rr;
-  } else { // radial outflow behind plate
-    const f=(p-0.45)/0.55; const rr=0.15+f*0.75; const a=s.a+f*1.6; z=-0.12-0.12*Math.min(1,f*3)-s.o;
-    x=Math.cos(a)*rr; y=Math.sin(a)*rr;
-  }
-  pos[i*3]=x;pos[i*3+1]=y;pos[i*3+2]=z;
-}
-
+/* 제품 모델·공기 흐름: fe-model.js (실물 FE-B400FT 기준) */
+const fanModel=buildFan(THREE), fan=fanModel.group; scene.add(fan);
+const solids=fanModel.solids, ray=new THREE.Raycaster();
 // hotspots
 const hotsEl=document.getElementById('hots');
-const hotBtns=POINTS.map((p,i)=>{const b=document.createElement('button');b.type='button';b.className='hot';b.textContent=i+1;b.dataset.id=p.id;b.setAttribute('aria-label',p.title);b.setAttribute('aria-pressed','false');b.onclick=()=>select(p.id);hotsEl.appendChild(b);return {b,v:new THREE.Vector3(...p.pos)}});
+const hotBtns=POINTS.map((p,i)=>{const b=document.createElement('button');b.type='button';b.className='hot';b.textContent=i+1;b.dataset.id=p.id;b.setAttribute('aria-label',p.title);b.setAttribute('aria-pressed','false');b.onclick=()=>select(p.id);hotsEl.appendChild(b);return {b,v:new THREE.Vector3(...(fanModel.hotspots[p.id]||p.pos))}});
 
 function resize(){const w=viewer.clientWidth,h=viewer.clientHeight;renderer.setSize(w,h,false);camera.aspect=w/h;camera.updateProjectionMatrix()}
 new ResizeObserver(resize).observe(viewer); resize();
@@ -486,9 +409,7 @@ const reduce=matchMedia('(prefers-reduced-motion: reduce)').matches;
 let last=performance.now();
 function frame(now){
   const dt=Math.min(0.05,(now-last)/1000); last=now;
-  rotor.rotation.z -= dt*speed*(reduce?1.5:7);
-  seeds.forEach((s,i)=>{s.p=(s.p+dt*speed*0.35)%1;placeParticle(s,i)}); pgeo.attributes.position.needsUpdate=true;
-  pmat.opacity=0.25+0.6*speed;
+  fanModel.update(reduce?dt*0.25:dt);
   controls.update(); renderer.render(scene,camera);
   const w=viewer.clientWidth,h=viewer.clientHeight, camDir=new THREE.Vector3(); camera.getWorldDirection(camDir);
   hotBtns.forEach(({b,v})=>{const q=v.clone().project(camera);b.style.left=((q.x+1)/2*w)+'px';b.style.top=((1-q.y)/2*h)+'px';
