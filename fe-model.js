@@ -236,36 +236,61 @@ export function buildFan(THREE) {
   const mistTex = new THREE.CanvasTexture(atlas);
   // 색만 더하고 알파는 건드리지 않음 → 투명 캔버스(3d.html)에서도 검게 비지 않음
   const MIST_BLEND = { blending: THREE.CustomBlending, blendSrc: THREE.SrcAlphaFactor, blendDst: THREE.OneFactor, blendSrcAlpha: THREE.ZeroFactor, blendDstAlpha: THREE.OneFactor, transparent: true, depthWrite: false };
-  const WARM = [new THREE.Color(1.0, 0.25, 0.03), new THREE.Color(1.0, 0.52, 0.1)], COOL = [new THREE.Color(0.5, 0.82, 1.0), new THREE.Color(0.2, 0.5, 0.95)];
+  // 흡입·배출 모두 실내의 따뜻한 공기(약 30~35℃) 느낌: 채도 낮은 호박색 → 옅은 웜 베이지 (과장된 불꽃색·에어컨 냉기색 쓰지 않음)
+  const WARM = [new THREE.Color(0.95, 0.55, 0.26), new THREE.Color(0.95, 0.62, 0.34)], COOL = [new THREE.Color(0.92, 0.62, 0.38), new THREE.Color(0.85, 0.58, 0.38)];
   const mistCol = (p, out) => p < 0.34 ? out.copy(WARM[0]).lerp(WARM[1], p / 0.34)
     : p < 0.56 ? out.copy(WARM[1]).lerp(COOL[0], (p - 0.34) / 0.22) : out.copy(COOL[0]).lerp(COOL[1], (p - 0.56) / 0.44);
-  const NM = 300, mist = [];
+  const NM = 430, NW = 220, mist = []; // 흡입 쪽 NW개, 배출 쪽 나머지
   const mPos = new Float32Array(NM * 3), mCol = new Float32Array(NM * 4), mSize = new Float32Array(NM), mRot = new Float32Array(NM), mCell = new Float32Array(NM);
+  const mVel = new Float32Array(NM * 3), mStr = new Float32Array(NM); // 이동 방향(세계 좌표)·늘어나는 정도
   const mGeo = new THREE.BufferGeometry();
   mGeo.setAttribute('position', new THREE.BufferAttribute(mPos, 3)); mGeo.setAttribute('aCol', new THREE.BufferAttribute(mCol, 4));
   mGeo.setAttribute('aSize', new THREE.BufferAttribute(mSize, 1)); mGeo.setAttribute('aRot', new THREE.BufferAttribute(mRot, 1)); mGeo.setAttribute('aCell', new THREE.BufferAttribute(mCell, 1));
+  mGeo.setAttribute('aVel', new THREE.BufferAttribute(mVel, 3)); mGeo.setAttribute('aStr', new THREE.BufferAttribute(mStr, 1));
   const mMat = new THREE.ShaderMaterial({
-    uniforms: { tMap: { value: mistTex }, uScale: { value: 1 } },
-    vertexShader: `attribute vec4 aCol; attribute float aSize, aRot, aCell; uniform float uScale; varying vec4 vCol; varying float vRot, vCell;
-      void main(){ vCol = aCol; vRot = aRot; vCell = aCell; vec4 mv = modelViewMatrix * vec4(position, 1.); gl_PointSize = aSize * uScale / -mv.z; gl_Position = projectionMatrix * mv; }`,
-    fragmentShader: `uniform sampler2D tMap; varying vec4 vCol; varying float vRot, vCell;
-      void main(){ vec2 p = gl_PointCoord - 0.5; float c = cos(vRot), s = sin(vRot); p = mat2(c, -s, s, c) * p;
-        if (abs(p.x) > 0.5 || abs(p.y) > 0.5) discard;
-        vec2 uv = (p + 0.5) * 0.5 + vec2(mod(vCell, 2.), floor(vCell / 2.)) * 0.5; uv.y = 1. - uv.y;
+    uniforms: { tMap: { value: mistTex }, uScale: { value: 1 }, uAspect: { value: 1 } },
+    vertexShader: `attribute vec4 aCol; attribute vec3 aVel; attribute float aSize, aRot, aCell, aStr; uniform float uScale, uAspect;
+      varying vec4 vCol; varying float vRot, vCell, vStr; varying vec2 vDir;
+      void main(){ vCol = aCol; vRot = aRot; vCell = aCell; vStr = aStr;
+        vec4 mv = modelViewMatrix * vec4(position, 1.), c0 = projectionMatrix * mv, c1 = projectionMatrix * (modelViewMatrix * vec4(position + aVel * 0.05, 1.));
+        vec2 d = (c1.xy / c1.w - c0.xy / c0.w) * vec2(uAspect, -1.); // 점 스프라이트 좌표(아래가 +y)의 이동 방향
+        vDir = length(d) > 1e-5 ? normalize(d) : vec2(1., 0.);
+        gl_PointSize = aSize * sqrt(aStr) * uScale / -mv.z; gl_Position = c0; }`,
+    fragmentShader: `uniform sampler2D tMap; varying vec4 vCol; varying float vRot, vCell, vStr; varying vec2 vDir;
+      void main(){ vec2 p = gl_PointCoord - 0.5;
+        vec2 q = vec2(dot(p, vDir), dot(p, vec2(-vDir.y, vDir.x)) * vStr); // 진행 방향으로 길고, 옆으로 좁게
+        float k = clamp((vStr - 1.) / 1.2, 0., 1.), c = cos(vRot * (1. - k)), s = sin(vRot * (1. - k)); q = mat2(c, -s, s, c) * q; // 많이 늘어날수록 회전은 줄임
+        if (abs(q.x) > 0.5 || abs(q.y) > 0.5) discard;
+        vec2 uv = (q + 0.5) * 0.5 + vec2(mod(vCell, 2.), floor(vCell / 2.)) * 0.5; uv.y = 1. - uv.y;
         float a = texture2D(tMap, uv).a * vCol.a; gl_FragColor = vec4(vCol.rgb, a); }`,
     ...MIST_BLEND,
   });
-  const mistPts = new THREE.Points(mGeo, mMat); mistPts.frustumCulled = false; group.add(mistPts);
+  const mistPts = new THREE.Points(mGeo, mMat); mistPts.frustumCulled = false; mistPts.userData.air = true; group.add(mistPts); // air: 아지랑이 마스크에서 제외
   // 점 크기를 화면 높이에 맞춤 (세계 단위 크기 → 픽셀)
-  mistPts.onBeforeRender = (r, sc, cam) => { const h = r.getDrawingBufferSize(new THREE.Vector2()).y; mMat.uniforms.uScale.value = h / (2 * Math.tan(THREE.MathUtils.degToRad(cam.fov || 32) / 2)); };
+  mistPts.onBeforeRender = (r, sc, cam) => { const h = r.getDrawingBufferSize(new THREE.Vector2()).y; mMat.uniforms.uScale.value = h / (2 * Math.tan(THREE.MathUtils.degToRad(cam.fov || 32) / 2)); mMat.uniforms.uAspect.value = cam.aspect || 1; };
   for (let i = 0; i < NM; i++) {
-    const warmSide = i < 90; // 흡입 쪽 90개(옅게), 배출 쪽 210개
+    const warmSide = i < NW;
     mCell[i] = i % 4; mRot[i] = Math.random() * 6.28;
-    mist.push({ i, warmSide, p: warmSide ? Math.random() * 0.45 : 0.5 + Math.random() * 0.5, a: Math.random() * Math.PI * 2, r: Math.sqrt(Math.random()) * 0.2, o: Math.random(), rank: Math.random(),
-      size: warmSide ? 0.22 + 0.2 * Math.random() : 0.2 + 0.25 * Math.random(), spin: (Math.random() - 0.5) * 0.6 });
+    mist.push({ i, warmSide, p: warmSide ? Math.random() : 0.5 + Math.random() * 0.5, a: Math.random() * Math.PI * 2, r: Math.sqrt(Math.random()) * 0.2, o: Math.random(), rank: Math.random(),
+      // 흡입: 축에서 벗어난 각도(0=정면, 약 80°=장착판 면을 따라 옆에서)와 출발 거리
+      phi: Math.pow(Math.random(), 0.8) * 1.4, R0: 0.95 + Math.random() * 0.45,
+      size: warmSide ? 0.2 + 0.16 * Math.random() : 0.2 + 0.25 * Math.random(), spin: (Math.random() - 0.5) * 0.6 });
   }
-  const tmpV = new THREE.Vector3();
+  const tmpV = new THREE.Vector3(), tmpV2 = new THREE.Vector3();
   const tmpC = new THREE.Color();
+  const IN = new THREE.Vector3(0, 0, 0.06); // 흡입구 중심(벨마우스 입구)
+  function intakeAt(m, u, s, v) {
+    if (u < 0.86) {
+      const k = u / 0.86, d = m.R0 * Math.sqrt(1 - k) + 0.06;            // 거리 ∝ √(남은 시간) → 가까울수록 빨라짐
+      const phi = m.phi * Math.min(1, Math.max(0, (d - 0.12) / 0.7));    // 다가오며 축 방향으로 휘어 입구로 들어감
+      const a = m.a - 1.1 * s * Math.pow(1 - Math.min(1, d / m.R0), 2); // 입구 직전 임펠러 회전 방향으로 살짝 감김
+      const lat = Math.sin(phi) * d;
+      v.set(Math.cos(a) * lat, Math.sin(a) * lat, Math.max(IN.z + 0.02 * Math.min(1, lat / 0.45), IN.z + Math.cos(phi) * d));
+    } else { // 입구 안쪽으로 빨려 들어감
+      const k = (u - 0.86) / 0.14, a = m.a - 1.1 * s - 1.6 * s * k, rr = (0.06 + 0.1 * m.r / 0.2) * (1 - 0.4 * k);
+      v.set(Math.cos(a) * rr, Math.sin(a) * rr, IN.z - 0.24 * k);
+    }
+  }
   function flowAt(s, p, v) {
     if (p < 0.42) { // 정면에서 축 방향으로 빨려 들어옴
       const f = p / 0.42, rr = s.r * (1 - 0.25 * f * f);
@@ -288,19 +313,36 @@ export function buildFan(THREE) {
     ghosts.forEach((g, k) => { g.rotation.z = smear * (k + 1) / GHOSTS; });
     ghostMat.opacity = 0.32 * Math.min(1, smear / (spacing * 0.6));
     swirl = 1.3 + 0.6 * s;
-    const vel = 0.32 * s;
+    const vIn = 0.55 * s, vOut = 0.4 * s; // 흐름 속도 ∝ 회전 속도
     for (const m of mist) {
-      // 흡입 쪽 조각은 0~0.45 구간, 배출 쪽 조각은 0.5~1 구간을 돈다
-      const lo = m.warmSide ? 0 : 0.5, span = m.warmSide ? 0.45 : 0.5;
-      m.p = lo + (((m.p - lo + dt * vel) % span) + span) % span;
-      const f = (m.p - lo) / span, env = Math.min(1, f / 0.15, (1 - f) / 0.3);
       const vis = Math.min(1, Math.max(0, (s - m.rank) / 0.08)); // 보이는 양 ∝ 속도, 경계는 부드럽게
-      flowAt(m, m.p, tmpV); mPos.set([tmpV.x, tmpV.y, tmpV.z], m.i * 3);
-      mistCol(m.p, tmpC); mCol.set([tmpC.r, tmpC.g, tmpC.b, (m.warmSide ? 0.11 : 0.1) * env * vis * (0.35 + 0.65 * s)], m.i * 4);
+      let alpha, size;
+      if (m.warmSide) { // 흡입: 넓은 범위에서 모여들어 가속하며 입구로
+        m.p = ((m.p + dt * vIn) % 1 + 1) % 1;
+        intakeAt(m, m.p, s, tmpV); intakeAt(m, Math.min(1, m.p + 0.004), s, tmpV2);
+        const sp = tmpV2.distanceTo(tmpV) / 0.004 * vIn;                    // 실제 이동 속도(세계 단위/초)
+        tmpV2.sub(tmpV); mVel.set([tmpV2.x, tmpV2.y, tmpV2.z], m.i * 3);
+        mStr[m.i] = 1 + Math.min(2.4, sp * 1.6);                             // 빠를수록 진행 방향으로 길게
+        const near = 1 - Math.min(1, tmpV.distanceTo(IN) / m.R0);           // 입구에 가까울수록 1
+        const env = Math.min(1, m.p / 0.18, (1 - m.p) / 0.08);
+        alpha = (0.05 + 0.17 * near * near) * env;                            // 모여들며 짙어짐
+        size = m.size * (1.25 - 0.6 * near);                                  // 모여들며 작게 뭉침
+        mistCol(m.p * 0.45, tmpC);
+      } else { // 배출: 옆으로 퍼져 나감
+        const lo = 0.5, span = 0.5;
+        m.p = lo + (((m.p - lo + dt * vOut) % span) + span) % span;
+        const f = (m.p - lo) / span, env = Math.min(1, f / 0.15, (1 - f) / 0.3);
+        flowAt(m, m.p, tmpV); flowAt(m, Math.min(1, m.p + 0.004), tmpV2); tmpV2.sub(tmpV); mVel.set([tmpV2.x, tmpV2.y, tmpV2.z], m.i * 3);
+        mStr[m.i] = 1 + Math.min(1.2, tmpV2.length() / 0.004 * vOut * 1.2);
+        alpha = 0.1 * env; size = m.size * (0.8 + 0.5 * f);
+        mistCol(m.p, tmpC);
+      }
+      mPos.set([tmpV.x, tmpV.y, tmpV.z], m.i * 3);
+      mCol.set([tmpC.r, tmpC.g, tmpC.b, alpha * vis * (0.35 + 0.65 * s)], m.i * 4);
       mRot[m.i] += m.spin * dt * (0.3 + s);
-      mSize[m.i] = m.size * (0.8 + 0.5 * (m.warmSide ? 0 : f));
+      mSize[m.i] = size;
     }
-    for (const k of ['position', 'aCol', 'aSize', 'aRot']) mGeo.attributes[k].needsUpdate = true;
+    for (const k of ['position', 'aCol', 'aSize', 'aRot', 'aVel', 'aStr']) mGeo.attributes[k].needsUpdate = true;
   }
 
   return { group, rotor, solids, hotspots: HOTSPOTS, setSpeed, update, get speed() { return cur; } };
@@ -314,10 +356,10 @@ export function createHaze(THREE, renderer) {
   // 장면은 선형 HDR로 받아 두고, 화면에 그릴 때 톤매핑·sRGB 변환을 이 셰이더에서 적용
   const rt = new THREE.WebGLRenderTarget(2, 2, { samples: 4, type: THREE.HalfFloatType });
   const mat = new THREE.ShaderMaterial({
-    uniforms: { tScene: { value: rt.texture }, uA: { value: new THREE.Vector2() }, uB: { value: new THREE.Vector2() }, uR: { value: 0.1 },
+    uniforms: { tScene: { value: rt.texture }, tMask: { value: null }, uPx: { value: new THREE.Vector2() }, uA: { value: new THREE.Vector2() }, uB: { value: new THREE.Vector2() }, uR: { value: 0.1 },
       uAspect: { value: 1 }, uT: { value: 0 }, uK: { value: 0 } },
     vertexShader: 'varying vec2 vUv; void main(){ vUv = uv; gl_Position = vec4(position.xy, 0., 1.); }',
-    fragmentShader: `uniform sampler2D tScene; uniform vec2 uA, uB; uniform float uR, uAspect, uT, uK; varying vec2 vUv;
+    fragmentShader: `uniform sampler2D tScene, tMask; uniform vec2 uPx, uA, uB; uniform float uR, uAspect, uT, uK; varying vec2 vUv;
       float h(vec2 p){ return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
       float n(vec2 p){ vec2 i = floor(p), f = fract(p); f = f*f*(3.-2.*f); return mix(mix(h(i), h(i+vec2(1,0)), f.x), mix(h(i+vec2(0,1)), h(i+vec2(1,1)), f.x), f.y); }
       void main(){
@@ -326,14 +368,22 @@ export function createHaze(THREE, renderer) {
         float w = smoothstep(uR, uR * 0.25, d) * (0.35 + 0.65 * t) * uK;
         vec2 q = p * 34. + vec2(0., -uT * 2.2);
         vec2 off = (vec2(n(q), n(q + 17.3)) - 0.5) * 0.014 * w;
+        // 마스크를 몇 픽셀 넓혀서(최댓값) 제품 윤곽선도 흔들리지 않게
+        float m0 = texture2D(tMask, vUv).r; for (int i = 0; i < 8; i++) { float an = float(i) * 0.785398; m0 = max(m0, texture2D(tMask, vUv + vec2(cos(an), sin(an)) * uPx * 4.).r); }
+        m0 = clamp(m0 * 1.5, 0., 1.); float m1 = clamp(texture2D(tMask, vUv + off).r * 1.5, 0., 1.);
+        off *= (1. - m0) * (1. - m1);                 // 제품 픽셀은 움직이지 않고, 공기 픽셀도 제품을 끌어오지 않음
         vec4 c = texture2D(tScene, vUv + off);
-        c.rgb += vec3(0.05, 0.015, 0.) * w * c.a;
+        c.rgb += vec3(0.05, 0.015, 0.) * w * c.a * (1. - m0); // 열기 색도 제품 위에는 칠하지 않음
         gl_FragColor = c;
         #include <tonemapping_fragment>
         #include <colorspace_fragment>
       }`,
     depthTest: false, depthWrite: false, transparent: true, blending: THREE.NoBlending, toneMapped: true,
   });
+  // 제품 마스크: 제품 메시만 흰색으로 (화면 절반 해상도)
+  const maskRT = new THREE.WebGLRenderTarget(2, 2); mat.uniforms.tMask.value = maskRT.texture;
+  const maskMat = new THREE.MeshBasicMaterial({ color: 0xffffff, toneMapped: false });
+  const clear = new THREE.Color();
   const quad = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), mat); quad.frustumCulled = false;
   const qScene = new THREE.Scene(); qScene.add(quad); const qCam = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
   const va = new THREE.Vector3(), vb = new THREE.Vector3(), vr = new THREE.Vector3(), vc = new THREE.Vector3();
@@ -348,8 +398,15 @@ export function createHaze(THREE, renderer) {
       const asp = size.x / size.y;
       mat.uniforms.uA.value.set((va.x + 1) / 2, (va.y + 1) / 2); mat.uniforms.uB.value.set((vb.x + 1) / 2, (vb.y + 1) / 2);
       mat.uniforms.uR.value = Math.max(0.04, Math.hypot((vr.x - vc.x) / 2 * asp, (vr.y - vc.y) / 2) * 1.6);
-      mat.uniforms.uAspect.value = asp; mat.uniforms.uT.value = time; mat.uniforms.uK.value = speed;
+      mat.uniforms.uAspect.value = asp; mat.uniforms.uPx.value.set(1 / size.x, 1 / size.y); mat.uniforms.uT.value = time; mat.uniforms.uK.value = speed;
       const prev = renderer.getRenderTarget(); renderer.setRenderTarget(rt); renderer.clear(); renderer.render(scene, camera);
+      // 마스크 패스: 연무(air)는 숨기고, 그림자 맵은 다시 계산하지 않음
+      if (maskRT.width !== Math.ceil(size.x / 2) || maskRT.height !== Math.ceil(size.y / 2)) maskRT.setSize(Math.ceil(size.x / 2), Math.ceil(size.y / 2));
+      const air = []; scene.traverse((o) => { if (o.userData.air && o.visible) { air.push(o); o.visible = false; } });
+      const au = renderer.shadowMap.autoUpdate, ca = renderer.getClearAlpha(); renderer.getClearColor(clear);
+      renderer.shadowMap.autoUpdate = false; renderer.setClearColor(0x000000, 0); scene.overrideMaterial = maskMat;
+      renderer.setRenderTarget(maskRT); renderer.clear(); renderer.render(scene, camera);
+      scene.overrideMaterial = null; renderer.setClearColor(clear, ca); renderer.shadowMap.autoUpdate = au; air.forEach((o) => { o.visible = true; });
       renderer.setRenderTarget(prev); renderer.render(qScene, qCam);
     },
   };

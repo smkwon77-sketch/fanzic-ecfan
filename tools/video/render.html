@@ -50,7 +50,7 @@ function view(v) {
 function size(w, h) { renderer.setSize(w, h, false); camera.aspect = w / h; camera.updateProjectionMatrix(); }
 const snapCanvas = document.createElement('canvas');
 window.studio = {
-  THREE, renderer, scene, camera, fan, VIEWS, view, size,
+  THREE, renderer, scene, camera, fan, haze, VIEWS, view, size,
   speed(s) { fan.setSpeed(s); },
   step(dt = 1 / 30, n = 1) { for (let i = 0; i < n; i++) fan.update(dt); },
   render() { haze.render(scene, camera, fan.speed, 0); },
